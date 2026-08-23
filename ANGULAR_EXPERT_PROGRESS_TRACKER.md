@@ -13,7 +13,7 @@
 | # | Module Name | Status | Notes & Milestones |
 |---|---|---|---|
 | 00 | 00-foundations | 🟢 Completed | Modern web fundamentals, protocols, browser lifecycle, end-to-end request flow |
-| 01 | 01-typescript-mastery | 🔴 Not Started | Strict typing, conditional types, mapped types, type guards |
+| 01 | 01-typescript-mastery | 🟢 Completed | Strict typing, conditional types, mapped types, type guards, Java-TS contracts |
 | 02 | 02-javascript-runtime | 🔴 Not Started | Event loop, microtask queue, memory management, garbage collection |
 | 03 | 03-angular-fundamentals | 🔴 Not Started | Modern Angular paradigm, standalone architecture, project layout |
 | 04 | 04-angular-internals | 🔴 Not Started | Bootstrap, ViewTree, Change Detection engine, AOT compiler |
