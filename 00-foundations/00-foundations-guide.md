@@ -306,9 +306,79 @@ Ensure `CorsFilter` runs at the highest precedence in the Spring Security filter
 
 ---
 
-## 21. EXERCISES
-1. Explain what happens if an Angular app on `http://localhost:4200` makes a `POST` request to `http://localhost:8080/api` without a preflight configuration.
-2. Configure an Nginx configuration file snippet that handles both Angular HTML5 routing and proxies `/api/*` to Spring Boot.
+## 21. EXERCISES & SOLUTIONS
+
+### Exercise 1: Unconfigured Cross-Origin POST Flow
+**Question:** Explain what happens if an Angular app on `http://localhost:4200` makes a `POST` request (`application/json`) to `http://localhost:8080/api` without a preflight CORS configuration on the backend.
+**Solution & Analysis:**
+1. Because `application/json` is NOT a simple content type (`application/x-www-form-urlencoded`, `multipart/form-data`, `text/plain`), the browser halts the `POST` request.
+2. The browser automatically dispatches an `OPTIONS` preflight request with headers:
+   - `Origin: http://localhost:4200`
+   - `Access-Control-Request-Method: POST`
+   - `Access-Control-Request-Headers: content-type`
+3. Spring Boot receives the `OPTIONS` request. Without CORS enabled in Spring Security, Spring Security treats `OPTIONS` as unauthenticated or unmapped and returns `401 Unauthorized` or `403 Forbidden` without `Access-Control-Allow-*` headers.
+4. The browser inspects the response status and missing headers, aborts the network call, throws a CORS error in the browser console, and **never sends the actual `POST` request**. The backend database and business logic are never touched.
+
+---
+
+### Exercise 2: Nginx SPA Routing + Reverse Proxy Configuration
+**Question:** Write an enterprise-ready `nginx.conf` snippet that serves the Angular SPA, enables HTML5 pushState routing fallback, sets correct caching headers, and proxies `/api/` requests to the Spring Boot upstream.
+**Solution:**
+```nginx
+events { worker_connections 1024; }
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    
+    upstream backend_api {
+        server backend:8080 max_fails=3 fail_timeout=10s;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name app.enterprise.com;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # 1. Hashed Static Assets (Immutable Cache for 1 Year)
+        location ~* \.(?:css|js|woff2?|svg|png|jpg|webp)$ {
+            expires 1y;
+            add_header Cache-Control "public, max-age=31536000, immutable";
+            access_log off;
+            try_files $uri =404;
+        }
+
+        # 2. SPA Entry Point (Never Cache index.html)
+        location / {
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+            add_header Pragma "no-cache";
+            add_header Expires "0";
+            try_files $uri $uri/ /index.html;
+        }
+
+        # 3. API Gateway Reverse Proxy
+        location /api/ {
+            proxy_pass http://backend_api;
+            proxy_http_version 1.1;
+            
+            # Forward Original Client Details & Security Headers
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Request-ID $http_x_request_id;
+            
+            # Timeouts
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 60s;
+        }
+    }
+}
+```
 
 ---
 
@@ -320,8 +390,34 @@ Ensure `CorsFilter` runs at the highest precedence in the Spring Security filter
 
 ---
 
-## 23. EXPERT QUESTIONS (Principal / Staff Level)
+## 23. EXPERT QUESTIONS & ANSWERS (Principal / Staff Level)
 
-1. *Why does the browser omit the `Authorization` header during a CORS preflight `OPTIONS` request, and what architectural requirement does this impose on the Spring Security filter chain?*
-2. *If an application uses HttpOnly cookies for session management across subdomains (`app.company.com` and `api.company.com`), what specific `SameSite` and `Domain` cookie attributes are required, and why does `SameSite=Strict` fail in this topology?*
-3. *How does the browser event loop prioritize microtasks (Promises, `queueMicrotask`) versus macrotasks (`setTimeout`, DOM events), and why does Angular schedule Change Detection within the microtask drain?*
+### Question 1
+*Why does the browser omit the `Authorization` header during a CORS preflight `OPTIONS` request, and what architectural requirement does this impose on the Spring Security filter chain?*
+> **Answer:**
+> Under the W3C/WHATWG CORS specification, preflight `OPTIONS` requests are strictly non-credentialed probes designed to query server permissions *before* sensitive data or user tokens are sent across origins. Browsers intentionally strip `Authorization` and `Cookie` headers from `OPTIONS` calls to prevent credential leakage. 
+> 
+> **Architectural Requirement on Spring Security:**
+> `CorsFilter` must execute **before** `AuthorizationFilter` and `AuthenticationFilter` in the `SecurityFilterChain`. Furthermore, Spring Security must explicitly permit all `OPTIONS` requests without requiring authentication (`requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()` or via `http.cors(Customizer.withDefaults())`). If authentication is checked before CORS evaluation, Spring will reject the preflight with `401 Unauthorized`, deadlocking the browser.
+
+---
+
+### Question 2
+*If an application uses HttpOnly cookies for session management across subdomains (`app.company.com` and `api.company.com`), what specific `SameSite` and `Domain` cookie attributes are required, and why does `SameSite=Strict` fail in this topology?*
+> **Answer:**
+> - **`Domain=.company.com`**: Setting the root domain with a leading dot allows both `app.company.com` (origin 1) and `api.company.com` (origin 2) to share the cookie.
+> - **`SameSite=Lax` or `SameSite=None; Secure`**: Because `app.company.com` and `api.company.com` are different origins (even if same site), cross-origin XHR/Fetch requests initiated from `app.` to `api.` will **omit** cookies if `SameSite=Strict` is set. `SameSite=Strict` forbids sending the cookie on any cross-origin HTTP request regardless of whether the site/domain matches.
+> - **Angular Requirement**: Angular's `HttpClient` must make requests with `{ withCredentials: true }` so the browser attaches the cookie.
+> - **Backend Requirement**: Spring Boot CORS must declare `Access-Control-Allow-Credentials: true` and specify explicit allowed origins (never `*`).
+
+---
+
+### Question 3
+*How does the browser event loop prioritize microtasks (Promises, `queueMicrotask`) versus macrotasks (`setTimeout`, DOM events), and why does Angular schedule Change Detection within the microtask drain?*
+> **Answer:**
+> 1. The browser event loop processes synchronous code on the call stack first.
+> 2. When the call stack becomes empty, the engine drains the **Microtask Queue** completely until zero microtasks remain.
+> 3. After draining microtasks (and rendering if a frame tick occurs), the engine picks **exactly one** task from the Macrotask Queue.
+> 
+> **Why Angular schedules Change Detection in Microtasks:**
+> Multiple state changes often occur in rapid succession during a single user interaction (e.g., a component updates a signal, triggers a child component input change, and resolves an internal promise). By scheduling Change Detection as a **microtask**, Angular batches all synchronous mutations into a single coherent pass before the browser paints the screen. This ensures optimal rendering performance (preventing layout thrashing/jank) and guarantees that the DOM always reflects the latest state before the next frame is drawn.

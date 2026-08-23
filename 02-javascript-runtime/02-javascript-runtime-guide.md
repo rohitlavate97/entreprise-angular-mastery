@@ -301,16 +301,67 @@ V8 uses a **Generational Mark-and-Sweep** GC. Objects begin in the "Nursery" (Yo
 
 ---
 
-## 21. EXERCISES
-1. Trace the exact console output order of the following snippet:
-   ```javascript
-   console.log('1');
-   setTimeout(() => console.log('2'), 0);
-   Promise.resolve().then(() => console.log('3'));
-   queueMicrotask(() => console.log('4'));
-   console.log('5');
-   ```
-2. Refactor an uncleaned `window.addEventListener('scroll', fn)` into a leak-free implementation using `DestroyRef` and `AbortController`.
+## 21. EXERCISES & SOLUTIONS
+
+### Exercise 1: Microtask vs Macrotask Output Order
+**Question:** Trace the exact console output order of the following snippet and explain the event loop state at each step:
+```javascript
+console.log('1');
+setTimeout(() => console.log('2'), 0);
+Promise.resolve().then(() => console.log('3'));
+queueMicrotask(() => console.log('4'));
+console.log('5');
+```
+**Solution & Analysis:**
+- **Exact Output:** `1`, `5`, `3`, `4`, `2`
+- **Step-by-Step Runtime Trace:**
+  1. `console.log('1')` executes synchronously on the Call Stack -> Output: `1`.
+  2. `setTimeout(..., 0)` registers a timer with the browser Web API. When timer expires (0ms), callback is pushed to the **Macrotask Queue**.
+  3. `Promise.resolve().then(...)` resolves and pushes callback `() => console.log('3')` to the **Microtask Queue**.
+  4. `queueMicrotask(...)` pushes `() => console.log('4')` directly to the **Microtask Queue** behind `3`.
+  5. `console.log('5')` executes synchronously on the Call Stack -> Output: `5`.
+  6. Call Stack is now empty! Event Loop immediately drains the **Microtask Queue**:
+     - Dequeues `() => console.log('3')` -> Output: `3`.
+     - Dequeues `() => console.log('4')` -> Output: `4`.
+  7. Microtask Queue is completely empty. Event loop checks rendering, then dequeues **one** task from the **Macrotask Queue**:
+     - Dequeues `() => console.log('2')` -> Output: `2`.
+
+---
+
+### Exercise 2: Leak-Free Window Scroll Listener
+**Question:** Refactor an uncleaned `window.addEventListener('scroll', fn)` into a leak-free Angular 19 implementation using `DestroyRef` and `AbortController`.
+**Solution:**
+```typescript
+import { Directive, OnInit, inject, DestroyRef } from '@angular/core';
+
+@Directive({
+  selector: '[appScrollTracker]',
+  standalone: true
+})
+export class ScrollTrackerDirective implements OnInit {
+  private readonly destroyRef = inject(DestroyRef);
+
+  ngOnInit(): void {
+    const controller = new AbortController();
+
+    // Passive listener for scrolling performance + AbortSignal for automatic GC unbinding
+    window.addEventListener(
+      'scroll',
+      (event) => this.handleScroll(event),
+      { passive: true, signal: controller.signal }
+    );
+
+    // Guaranteed teardown when host element/directive is destroyed
+    this.destroyRef.onDestroy(() => {
+      controller.abort();
+    });
+  }
+
+  private handleScroll(event: Event): void {
+    // Scroll handling logic...
+  }
+}
+```
 
 ---
 
@@ -322,8 +373,32 @@ V8 uses a **Generational Mark-and-Sweep** GC. Objects begin in the "Nursery" (Yo
 
 ---
 
-## 23. EXPERT QUESTIONS (Principal / Staff Level)
+## 23. EXPERT QUESTIONS & ANSWERS (Principal / Staff Level)
 
-1. *Why does executing a microtask loop (e.g., recursive `Promise.resolve().then()`) completely freeze the browser UI and prevent user clicks from firing, whereas a recursive `setTimeout(..., 0)` loop does not?*
-2. *In the V8 engine, what is the exact difference between a "Shallow Size" and a "Retained Size" in a Chrome Heap Snapshot, and which metric determines how much memory will be freed if a specific reference is severed?*
-3. *How does modern Angular Signal reactivity batch DOM updates using the microtask queue, and how does this eliminate the historic "ExpressionChangedAfterItHasBeenCheckedError" associated with Zone.js lifecycle ticks?*
+### Question 1
+*Why does executing a microtask loop (e.g., recursive `Promise.resolve().then()`) completely freeze the browser UI and prevent user clicks from firing, whereas a recursive `setTimeout(..., 0)` loop does not?*
+> **Answer:**
+> - **The Microtask Drain Invariant**: The HTML living standard dictates that once synchronous call stack execution completes, the browser **must drain the Microtask Queue to absolute zero** before moving forward. If a microtask enqueues another microtask, the engine stays in the microtask phase indefinitely. It will **never** reach the Rendering phase (requestAnimationFrame/Paint) and **never** process the Macrotask Queue (where user clicks, typing, and mouse events reside).
+> - **The Macrotask Dequeue Invariant**: In contrast, the event loop executes **only one single macrotask per tick**. When `setTimeout` schedules another `setTimeout`, the callback is placed at the *end* of the Macrotask Queue. Between each macrotask, the browser is guaranteed an opportunity to execute microtasks, update rendering, and respond to urgent user input events.
+
+---
+
+### Question 2
+*In the V8 engine, what is the exact difference between a "Shallow Size" and a "Retained Size" in a Chrome Heap Snapshot, and which metric determines how much memory will be freed if a specific reference is severed?*
+> **Answer:**
+> - **Shallow Size**: The amount of memory allocated directly to hold the object's own identity and immediate primitive fields (e.g., in V8, a basic JavaScript object wrapper has a shallow size of 32–64 bytes).
+> - **Retained Size**: The total memory freed if that specific object was deleted by Garbage Collection. It includes the object's shallow size PLUS the memory of all dependent descendant objects that are **only reachable** through this object (its dominator tree).
+> - **Which metric to use**: **Retained Size**. When hunting memory leaks, always sort the Chrome DevTools Heap Snapshot by **Retained Size** (or Retained Size %) to identify the root dominator holding detached DOM trees or large arrays in memory.
+
+---
+
+### Question 3
+*How does modern Angular Signal reactivity batch DOM updates using the microtask queue, and how does this eliminate the historic "ExpressionChangedAfterItHasBeenCheckedError" associated with Zone.js lifecycle ticks?*
+> **Answer:**
+> Under Zone.js, any macrotask completion (e.g., `setTimeout`, XHR, DOM click) triggered a synchronous top-down change detection sweep across the entire component tree. If a child component in `ngAfterViewInit` mutated a parent component property, Angular's dev-mode second verification pass caught the mismatch and threw `ExpressionChangedAfterItHasBeenCheckedError`.
+> 
+> In modern Angular Signals:
+> 1. Signal mutations mark dependent reactive nodes dirty in a **Glitch-Free Reactive Graph**.
+> 2. Angular's signal scheduler schedules DOM synchronization as a consolidated **microtask** (`queueMicrotask`).
+> 3. All intermediate signal updates that happen during the synchronous frame collapse into the final computed value before change detection runs.
+> 4. Change detection runs only once during the microtask phase, updating the exact DOM bindings with settled values, eliminating expression instability and the need for Zone.js monkey-patching.

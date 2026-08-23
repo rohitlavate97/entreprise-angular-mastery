@@ -346,9 +346,79 @@ Engineers frequently confuse **compile-time types** with **runtime validation**.
 
 ---
 
-## 21. EXERCISES
-1. Write a generic TypeScript mapped type `DeepReadonly<T>` that makes every nested property and array in an object immutable.
-2. Build a type guard `isApiError(response: unknown): response is ApiError` that safely validates an error payload without using `any`.
+## 21. EXERCISES & SOLUTIONS
+
+### Exercise 1: Recursive DeepReadonly<T> Utility
+**Question:** Write a generic TypeScript mapped type `DeepReadonly<T>` that recursively makes every nested property, object, and array immutable.
+**Solution & Analysis:**
+```typescript
+export type DeepReadonly<T> = T extends (infer R)[]
+  ? ReadonlyArray<DeepReadonly<R>>
+  : T extends Function | boolean | number | string | symbol | bigint | null | undefined
+  ? T
+  : T extends object
+  ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+  : T;
+
+// Verification Test:
+interface NestedUserProfile {
+  id: string;
+  preferences: {
+    theme: 'dark' | 'light';
+    notifications: { email: boolean; sms: boolean };
+    tags: string[];
+  };
+}
+
+type ImmutableProfile = DeepReadonly<NestedUserProfile>;
+// ImmutableProfile.preferences.notifications.email = true; -> Error: Cannot assign to read only property
+// ImmutableProfile.preferences.tags.push('new');            -> Error: Property 'push' does not exist on ReadonlyArray
+```
+
+---
+
+### Exercise 2: Sound Type Guard for ApiError
+**Question:** Build a type guard `isApiError(response: unknown): response is ApiError` that validates the complete shape of an API error payload without casting to `any`.
+**Solution:**
+```typescript
+import { ApiError } from './api-response.model';
+
+export function isApiError(response: unknown): response is ApiError {
+  if (typeof response !== 'object' || response === null) {
+    return false;
+  }
+
+  const obj = response as Record<string, unknown>;
+
+  const hasValidKind = obj['kind'] === 'ERROR';
+  const hasValidStatus = typeof obj['status'] === 'number';
+  const hasValidErrorCode = typeof obj['errorCode'] === 'string';
+  const hasValidMessage = typeof obj['message'] === 'string';
+  const hasValidTraceId = typeof obj['traceId'] === 'string';
+  const hasValidTimestamp = typeof obj['timestamp'] === 'string';
+
+  const hasValidFieldErrors =
+    obj['fieldErrors'] === undefined ||
+    (Array.isArray(obj['fieldErrors']) &&
+      obj['fieldErrors'].every(
+        (err) =>
+          typeof err === 'object' &&
+          err !== null &&
+          typeof (err as Record<string, unknown>)['field'] === 'string' &&
+          typeof (err as Record<string, unknown>)['message'] === 'string'
+      ));
+
+  return (
+    hasValidKind &&
+    hasValidStatus &&
+    hasValidErrorCode &&
+    hasValidMessage &&
+    hasValidTraceId &&
+    hasValidTimestamp &&
+    hasValidFieldErrors
+  );
+}
+```
 
 ---
 
@@ -360,8 +430,46 @@ Engineers frequently confuse **compile-time types** with **runtime validation**.
 
 ---
 
-## 23. EXPERT QUESTIONS (Principal / Staff Level)
+## 23. EXPERT QUESTIONS & ANSWERS (Principal / Staff Level)
 
-1. *How does TypeScript's `satisfies` operator differ from type annotation (`const x: T = ...`) and type assertion (`const x = ... as T`), and why is `satisfies` superior when configuring Angular route configurations and table column metadata?*
-2. *Why does JavaScript lose precision when parsing a 64-bit integer from JSON into a `number` type before TypeScript even evaluates the variable, and how must the Spring Boot Jackson serializer be configured to prevent this?*
-3. *How does Angular's `strictTemplates` compiler flag leverage TypeScript's type-checker to validate `@Input()` bindings, event emissions (`$event`), and structural directives like `@for`?*
+### Question 1
+*How does TypeScript's `satisfies` operator differ from type annotation (`const x: T = ...`) and type assertion (`const x = ... as T`), and why is `satisfies` superior when configuring Angular route configurations and table column metadata?*
+> **Answer:**
+> - **Type Annotation (`const x: T = ...`)**: Enforces that `x` conforms to `T`, but **widens** the inferred type of `x` to `T`. Specific literal property names or exact narrow types are lost.
+> - **Type Assertion (`const x = ... as T`)**: Forcefully asserts the type, disabling compiler safety and masking missing or invalid properties.
+> - **`satisfies` Operator (`const x = ... satisfies T`)**: Validates that the object strictly matches contract `T` at compile time, **while preserving the narrowest possible literal types** of the object.
+> 
+> **In Angular Configuration:**
+> When defining route metadata or table columns, `satisfies` guarantees that column keys exist on the model interface while still preserving autocomplete for specific column string literals in child components and templates.
+
+---
+
+### Question 2
+*Why does JavaScript lose precision when parsing a 64-bit integer from JSON into a `number` type before TypeScript even evaluates the variable, and how must the Spring Boot Jackson serializer be configured to prevent this?*
+> **Answer:**
+> JavaScript numbers are represented internally as IEEE 754 double-precision floating-point numbers (64-bit float with a 53-bit mantissa). The maximum exact integer representable without precision loss is $2^{53} - 1 = 9,007,199,254,740,991$ (`Number.MAX_SAFE_INTEGER`). A Java 64-bit `Long` max value is $2^{63} - 1 = 9,223,372,036,854,775,807$.
+> 
+> When browser `JSON.parse()` processes a raw numeric payload like `{"id": 9223372036854775807}`, it rounds the lowest bits during C++ engine parsing **before** passing it to JavaScript/TypeScript.
+> 
+> **Spring Boot Fix:**
+> Jackson must be configured to serialize `Long` IDs as JSON strings:
+> ```java
+> @JsonSerialize(using = ToStringSerializer.class)
+> Long id;
+> ```
+> Or globally in `application.yml`:
+> ```yaml
+> spring:
+>   jackson:
+>     generator:
+>       write-numbers-as-strings: false # keep for decimals, but use custom serializer for Long primary keys
+> ```
+
+---
+
+### Question 3
+*How does Angular's `strictTemplates` compiler flag leverage TypeScript's type-checker to validate `@Input()` bindings, event emissions (`$event`), and structural directives like `@for`?*
+> **Answer:**
+> When `strictTemplates: true` is enabled in `angularCompilerOptions`, Angular's Ivy AOT compiler transforms every HTML template into **TypeScript Type-Check Blocks (TCBs)** in memory. 
+> 
+> In a TCB, Angular generates synthetic TypeScript code mimicking the template's data bindings. It passes the component's state and methods into the TCB and invokes TypeScript's type-checker directly. If an `@Input()` expects `UserSummaryDto` but the template passes `unknown` or a mismatched type, TypeScript emits a compile-time error (`TS2322`) with the exact template line and column number.
