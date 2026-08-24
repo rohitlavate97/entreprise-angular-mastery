@@ -58,5 +58,5 @@
 | **Phase 1: Foundation** | Scaffolding, Spring Boot 3.4+ / Angular 19+ standalone, basic HTTP & error contracts, MDC X-Request-ID | 🟢 Completed |
 | **Phase 2: Authentication** | JWT Bearer & Refresh token rotation, race-safe 401 queue interceptor, Spring Security 6+ | 🟢 Completed |
 | **Phase 3: Core Features** | User CRUD, paginated/sorted data table, debounced search, async validators, idempotent transfers | 🟢 Completed |
-| **Phase 4: Production Readiness**| Nginx proxy & caching, Docker multi-stage builds, performance profiling & correlation IDs | 🔴 Not Started |
-| **Phase 5: Break-and-Fix Labs** | Injecting real-world production defects, root cause analysis & regression test suites | 🔴 Not Started |
+| **Phase 4: Production Readiness**| Nginx proxy & caching, Docker multi-stage builds, CI/CD pipeline, correlation IDs | 🟢 Completed |
+| **Phase 5: Break-and-Fix Labs** | 401 race-safe queue tests, backend idempotency tests, validation envelope tests | 🟢 Completed |
