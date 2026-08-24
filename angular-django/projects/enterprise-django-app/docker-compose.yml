@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # PostgreSQL 16 Database
+  # -------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: django_enterprise_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: enterprise_django_db
+      POSTGRES_USER: django_user
+      POSTGRES_PASSWORD: django_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_django_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django_user -d enterprise_django_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------------------------------------------
+  # Redis Broker for Celery & Caching
+  # -------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: django_enterprise_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  # -------------------------------------------------------------
+  # Django 5+ Gunicorn Backend Service
+  # -------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: django_enterprise_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings
+      DATABASE_URL: postgres://django_user:django_password@postgres:5432/enterprise_django_db
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: enterprise-production-super-secret-key
+      DEBUG: "0"
+    ports:
+      - "8000:8000"
+
+  # -------------------------------------------------------------
+  # Celery Background Worker Pool
+  # -------------------------------------------------------------
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: django_enterprise_celery
+    restart: unless-stopped
+    command: celery -A config worker --loglevel=info --concurrency=4
+    depends_on:
+      - backend
+      - redis
+    environment:
+      DATABASE_URL: postgres://django_user:django_password@postgres:5432/enterprise_django_db
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: enterprise-production-super-secret-key
+
+  # -------------------------------------------------------------
+  # Angular 19+ Frontend with Nginx
+  # -------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: django_enterprise_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8081:80"
+
+volumes:
+  postgres_django_data:
