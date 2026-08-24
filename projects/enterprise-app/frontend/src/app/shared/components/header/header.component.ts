@@ -17,15 +17,28 @@ import { AuthService } from '../../../core/services/auth.service';
         </div>
 
         <nav class="flex items-center space-x-6">
-          <a routerLink="/health" routerLinkActive="text-blue-400 font-semibold"
-             class="text-sm text-slate-300 hover:text-white transition">System Telemetry</a>
-
           @if (authService.isAuthenticated()) {
+            <a routerLink="/users" routerLinkActive="text-blue-400 font-semibold"
+               class="text-sm text-slate-300 hover:text-white transition">Users Directory</a>
+            
+            <a routerLink="/transfers" routerLinkActive="text-blue-400 font-semibold"
+               class="text-sm text-slate-300 hover:text-white transition">Transfers</a>
+
             <a routerLink="/profile" routerLinkActive="text-blue-400 font-semibold"
                class="text-sm text-slate-300 hover:text-white transition">Profile</a>
-            
+          }
+
+          <a routerLink="/health" routerLinkActive="text-blue-400 font-semibold"
+             class="text-sm text-slate-300 hover:text-white transition">Telemetry</a>
+
+          @if (authService.isAuthenticated()) {
             <div class="flex items-center space-x-3 pl-4 border-l border-slate-700">
-              <span class="text-xs text-slate-400">Signed in as <strong>{{ authService.currentUser()?.username }}</strong></span>
+              <span class="text-xs text-slate-400">
+                <strong>{{ authService.currentUser()?.username }}</strong>
+                @if (authService.isAdmin()) {
+                  <span class="badge badge-success text-[10px] ml-1">ADMIN</span>
+                }
+              </span>
               <button (click)="authService.logout()" class="btn text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 px-3">
                 Logout
               </button>
